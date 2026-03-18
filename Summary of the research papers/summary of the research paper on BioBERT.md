@@ -60,6 +60,6 @@ If you use BioBERT in your research or project, please cite the original paper:
 }
 
 
-📜 License
+License
 
 The original article is an Open Access article distributed under the terms of the Creative Commons Attribution License.
