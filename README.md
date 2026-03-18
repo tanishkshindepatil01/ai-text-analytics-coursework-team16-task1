@@ -80,4 +80,11 @@ Relevance: Relevant for understanding extractive biomedical QA methods and answe
 
 Authors: Giacomo Frisoni, Miki Mizutani, Gianluca Moro, Lorenzo Valgimigli.
 
+
+
+
+I contributed to the project by carrying out a targeted literature search on biomedical question answering and PubMedQA. 
+I identified and reviewed papers on the PubMedQA dataset, BioBERT, PubMedBERT, ClinicalBERT, SciFive, BioASQ, and biomedical QA evaluation methods. 
+This helped the team justify our design choices, compare suitable modelling approaches, and build the literature review for the report.
+
 Relevance: Useful for discussing and analyzing retrieval-enhanced (RAG) and generation-based biomedical QA pipelines.
