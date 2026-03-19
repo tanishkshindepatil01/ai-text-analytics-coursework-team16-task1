@@ -42,10 +42,6 @@ Clinical notes contain rich information about patient condition, symptoms, and c
 - May need retraining on local institutional data before practical deployment.
 - Long-note aggregation remains challenging. fileciteturn0file0L349-L366
 
-## Included Files
-- `ClinicalBERT_two_page_summary.md` — a two-page style summary of the paper
-- `README.md` — this overview file
-
 ## Suggested Use
 This summary is useful for:
 - literature review writing
