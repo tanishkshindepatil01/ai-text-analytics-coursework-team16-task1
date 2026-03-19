@@ -42,24 +42,3 @@ NER: NCBI Disease, 2010 i2b2/VA, BC5CDR, BC4CHEMD, BC2GM, JNLPBA, LINNAEUS, Spec
 
 Relation Extraction: GAD (Gene-disease), EU-ADR (Gene-disease), CHEMPROT (Protein-chemical)
 
-Question Answering: BioASQ 4b, 5b, and 6b (factoid)
-
-Citation
-
-If you use BioBERT in your research or project, please cite the original paper:
-
-@article{lee2020biobert,
-  title={BioBERT: a pre-trained biomedical language representation model for biomedical text mining},
-  author={Lee, Jinhyuk and Yoon, Wonjin and Kim, Sungdong and Kim, Donghyeon and Kim, Sunkyu and So, Chan Ho and Kang, Jaewoo},
-  journal={Bioinformatics},
-  volume={36},
-  number={4},
-  pages={1234--1240},
-  year={2020},
-  publisher={Oxford University Press}
-}
-
-
-License
-
-The original article is an Open Access article distributed under the terms of the Creative Commons Attribution License.
