@@ -1,0 +1,24 @@
+# Large data files
+desc2026.xml
+dataset_splits.json
+
+# Sensitive files
+.env
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Intermediate results (Optional, but safe to ignore if large)
+# processed_pubmedqa.json
+
+# Local IDE settings
+.vscode/
+.idea/
+.DS_Store
+
+ori_pqal.json
+*.json
+test*.py
