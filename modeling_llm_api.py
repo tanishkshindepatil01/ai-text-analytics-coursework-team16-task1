@@ -33,13 +33,9 @@ class GeminiDecisionMaker:
                     "type": "string",
                     "description": "The final decision based on the context. Must be one of 'yes', 'no', or 'maybe'.",
                     "enum": ["yes", "no", "maybe"]
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "A brief explanation for the decision based on the provided evidence."
                 }
             },
-            "required": ["final_decision", "reasoning"]
+            "required": ["final_decision"]
         }
         
         self.model = genai.GenerativeModel(
@@ -60,7 +56,7 @@ class GeminiDecisionMaker:
             contexts (list or str): A list of context strings or a single context string.
             
         Returns:
-            dict: A dictionary containing 'final_decision' and 'reasoning'.
+            dict: A dictionary containing 'final_decision'.
         """
         # Prepare the context text
         if isinstance(contexts, list):
@@ -84,8 +80,7 @@ class GeminiDecisionMaker:
         except Exception as e:
             print(f"Error during Gemini API call: {e}")
             return {
-                "final_decision": "error",
-                "reasoning": f"An error occurred: {str(e)}"
+                "final_decision": "error"
             }
 
 if __name__ == "__main__":

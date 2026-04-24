@@ -3,7 +3,7 @@ import os
 import time
 from modeling_llm_api import GeminiDecisionMaker
 
-def batch_process(input_file="dataset_splits.json", output_file="results_test_output.json", split_key="test", limit=None):
+def batch_process(input_file="dataset_splits.json", output_file="results_llm_test.json", split_key="test", limit=None):
     """
     Process the PubMedQA dataset in batches with breakpoint continuation support.
     Supports both raw processed files (list) and split files (dict with 'test' key).
@@ -84,7 +84,6 @@ def batch_process(input_file="dataset_splits.json", output_file="results_test_ou
                 "pmid": pmid,
                 "question": question,
                 "prediction": result.get("final_decision"),
-                "reasoning": result.get("reasoning"),
                 "ground_truth": item.get("final_decision")
             }
             
@@ -105,4 +104,4 @@ def batch_process(input_file="dataset_splits.json", output_file="results_test_ou
 if __name__ == "__main__":
     # To process the full test set, set limit=None
     # Defaulting to dataset_splits.json['test']
-    batch_process(input_file="dataset_splits.json", split_key="test", limit=None)
+    batch_process(input_file="dataset_splits.json", output_file="results_llm_test.json", split_key="test", limit=None)
