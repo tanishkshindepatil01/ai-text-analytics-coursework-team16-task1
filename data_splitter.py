@@ -56,7 +56,7 @@ def split_dataset(json_path: str = "processed_pubmedqa.json"):
     
     # 2. Initial Split: 500/500 (CV : Test)
     # Replicating notebook seed and logic
-    random.seed(0)
+    random.seed(42)
     two_halves = split_dataset_logic(pmids, labels, 2)
     
     cv_pmids = set(two_halves[0])
@@ -70,7 +70,7 @@ def split_dataset(json_path: str = "processed_pubmedqa.json"):
     test_data = [item for item in data if item['pmid'] in test_pmids]
     
     # 3. 10-Fold Cross Validation on CV set
-    random.seed(0)
+    random.seed(42)
     cv_labels = [item['final_decision'] for item in cv_data]
     cv_pmid_list = [item['pmid'] for item in cv_data]
     
