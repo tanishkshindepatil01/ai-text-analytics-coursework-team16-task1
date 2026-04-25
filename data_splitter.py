@@ -1,9 +1,10 @@
 import json
 import random
 import math
+import pandas as pd
 from functools import reduce
 from collections import defaultdict
-from config import CFG
+from sklearn.model_selection import StratifiedKFold
 import os
 
 def split_dataset_logic(dataset_pmids, labels, fold):
@@ -16,6 +17,7 @@ def split_dataset_logic(dataset_pmids, labels, fold):
 
     label2splits = {}
     for lab, pmids in label2pmids.items():
+        pmids = pmids.copy() # Match snippet copy behavior
         random.shuffle(pmids)
         num_all = len(pmids)
         num_split = math.ceil(num_all / fold)
@@ -32,10 +34,10 @@ def split_dataset_logic(dataset_pmids, labels, fold):
         fold_pmids = add([label2splits[lab][i] for lab in sorted(label2splits.keys())])
         output.append(fold_pmids)
 
-    # Adjust sizes if needed to match notebook behavior
+    # Adjust sizes if needed to match notebook behavior (using while as in snippet)
     if len(output[-1]) != len(output[0]):
         for i in range(fold - 1):
-            if len(output[i]) > len(output[-1]):
+            while len(output[i]) > len(output[-1]):
                 picked = random.choice(output[i])
                 output[-1].append(picked)
                 output[i].remove(picked)
@@ -45,7 +47,7 @@ def split_dataset_logic(dataset_pmids, labels, fold):
 def split_dataset(json_path: str = "processed_pubmedqa.json"):
     """
     Splits the dataset into 500 CV samples and 500 Test samples.
-    Then prepares 10 folds for the CV set.
+    Then prepares 10 folds for the CV set using StratifiedKFold.
     """
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -55,7 +57,6 @@ def split_dataset(json_path: str = "processed_pubmedqa.json"):
     labels = [item['final_decision'] for item in data]
     
     # 2. Initial Split: 500/500 (CV : Test)
-    # Replicating notebook seed and logic
     random.seed(42)
     two_halves = split_dataset_logic(pmids, labels, 2)
     
@@ -69,54 +70,41 @@ def split_dataset(json_path: str = "processed_pubmedqa.json"):
     cv_data = [item for item in data if item['pmid'] in cv_pmids]
     test_data = [item for item in data if item['pmid'] in test_pmids]
     
-    # 3. 10-Fold Cross Validation on CV set
-    random.seed(42)
-    cv_labels = [item['final_decision'] for item in cv_data]
-    cv_pmid_list = [item['pmid'] for item in cv_data]
+    # 3. 10-Fold Cross Validation on CV set (Aligned with Snippet)
+    cv_df = pd.DataFrame(cv_data)
     
-    ten_folds = split_dataset_logic(cv_pmid_list, cv_labels, 10)
+    # Replicate snippet shuffling
+    cv_df = cv_df.sample(frac=1, random_state=42).reset_index(drop=True)
     
-    pmid_to_fold = {}
-    for fold_idx, fold_pmids in enumerate(ten_folds):
-        for pmid in fold_pmids:
-            pmid_to_fold[pmid] = fold_idx
-            
-    # Add fold info to cv_data
-    for item in cv_data:
-        item['fold'] = pmid_to_fold[item['pmid']]
+    # Use StratifiedKFold as in snippet
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    
+    cv_df["fold"] = -1
+    for fold_idx, (_, val_idx) in enumerate(skf.split(cv_df, cv_df["final_decision"])):
+        cv_df.loc[val_idx, "fold"] = fold_idx
+        
+    # Convert back to list of dicts for the split dictionary
+    cv_data_aligned = cv_df.to_dict('records')
     
     # Save the splits
     splits = {
         'test': test_data,
-        'cv': cv_data
+        'cv': cv_data_aligned
     }
     
     with open('dataset_splits.json', 'w', encoding='utf-8') as f:
         json.dump(splits, f, ensure_ascii=False, indent=4)
     
-    print("Dataset splits saved to dataset_splits.json")
+    print("Dataset splits saved to dataset_splits.json (Aligned with Snippet)")
     for i in range(10):
-        fold_size = len([item for item in cv_data if item['fold'] == i])
+        fold_size = len([item for item in cv_data_aligned if item['fold'] == i])
         print(f"Fold {i}: {fold_size} samples")
         
     return splits
 
 if __name__ == "__main__":
-    # Check if processed file exists, else use ori_pqal.json
+    # Check if processed file exists
     if not os.path.exists("processed_pubmedqa.json"):
-        print("Warning: processed_pubmedqa.json not found. Using ori_pqal.json directly.")
-        with open("ori_pqal.json", "r", encoding="utf-8") as f:
-            raw_data = json.load(f)
-        data = []
-        for pmid, info in raw_data.items():
-            data.append({
-                "pmid": pmid,
-                "final_decision": info["final_decision"],
-                "QUESTION": info.get("QUESTION", ""),
-                "CONTEXTS": info.get("CONTEXTS", []),
-                "LONG_ANSWER": info.get("LONG_ANSWER", "")
-            })
-        with open("processed_pubmedqa.json", "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-            
-    split_dataset("processed_pubmedqa.json")
+        print("Error: processed_pubmedqa.json not found. Run data_preprocessor first.")
+    else:
+        split_dataset("processed_pubmedqa.json")
