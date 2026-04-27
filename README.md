@@ -1,8 +1,7 @@
 # Medical Question Answering on PubMedQA: Analysing Text Representations and Classifier Design
 
-## Student and Group Information
+## Group Information
 
-**Student Name:** Tanishk Nanasaheb Shinde  
 **Module:** EMATM0067 – Introduction to AI and Text Analytics  
 **University:** University of Bristol  
 **Group:** Group 16  
