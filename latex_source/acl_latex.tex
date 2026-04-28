@@ -1,0 +1,581 @@
+\documentclass[11pt]{article}
+\usepackage[final]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{makecell}
+\usepackage{ragged2e}
+\usepackage{tabularx}
+
+\renewcommand{\arraystretch}{1.08}
+\newcolumntype{L}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{-2pt}
+
+\graphicspath{{Figures/}{./Figures/}}
+
+\newcommand{\reportfig}[3]{
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth,height=6.4cm,keepaspectratio]{#1}
+\caption{#2}
+\label{#3}
+\end{figure}
+}
+
+\begin{document}
+
+\twocolumn[
+\begin{center}
+
+{\LARGE\bfseries Medical Question Answering on PubMedQA: \par}
+\vspace{0.2em}
+{\LARGE\bfseries Analysing Text Representations and Classifier Design \par}
+
+\vspace{0.9em}
+
+{\large\bfseries Group 16 \par}
+\vspace{0.2em}
+{\large EMATM0067 -- Introduction to AI and Text Analytics \par}
+{\large University of Bristol \par}
+
+\vspace{1.0em}
+
+\setlength{\tabcolsep}{18pt}
+\begin{tabular}{ccc}
+\textbf{Tanishk Nanasaheb Shinde} &
+\textbf{Abdullah Alahmari} &
+\textbf{Peidong Wang} \\
+\texttt{ac25643@bristol.ac.uk} &
+\texttt{dl25357@bristol.ac.uk} &
+\texttt{hz25950@bristol.ac.uk}
+\end{tabular}
+
+\vspace{0.8em}
+
+\begin{tabular}{cc}
+\textbf{Zhengjie Xue} &
+\textbf{Abhigyan Kashyap} \\
+\texttt{jw25233@bristol.ac.uk} &
+\texttt{wm25342@bristol.ac.uk}
+\end{tabular}
+
+\vspace{1.0em}
+
+\end{center}
+]
+
+\begin{abstract}
+In Biomedical QA, the goal is to classify whether the published evidence supports a \textit{yes}, \textit{no} or \textit{maybe} answer to a clinical research question. Here we investigate the PubMedQA expert-annotated subset under the Jin et al.\ (2019) 500/500 split, performing 10-fold stratified cross-validation of classical models and a held-out validation fold (fold 0) for tuning transformer models.
+
+With respect to textual representation (TF-IDF n-grams, BioBERT embeddings, Q, Q+Ctx, Q+Ctx+Ans combinations) and various classifiers (standard classifiers, zero-shot BART-MNLI, class-weighted, focal, ordinal, hierarchical, parameter-efficient LoRA), our best model---\textbf{PubMedBERT fine-tuned on Q+Ctx+Ans (A1g)}---achieves a test macro-F1 score of \textbf{0.604} (accuracy=75.4\%), considerably outperforming the TF-IDF+LR baseline (McNemar $b{=}164$, $c{=}40$, $p{<}0.001$).
+
+For the per-class results, \textit{maybe} is still the bottleneck: A1g scored $F1_{\text{maybe}}{=}0.19$, and \textbf{PubMedBERT with focal loss (M2)} scored the best $F1_{\text{maybe}}{=}0.24$, but with a lower overall macro-F1 of 0.591. This suggests a trade-off between overall score and recovery of the minority label.
+\end{abstract}
+
+\section{Introduction}
+
+Biomedical QA is the task of predicting whether an answer for a clinical research question can be found in scientific literature.\footnote{Code repository: \url{https://github.com/tanishkshindepatil01/ai-text-analytics-coursework-team16-task1}.} Biomedical QA is important for evidence-based medicine because biomedical literature is growing faster than clinicians can read and use it \cite{jin2022biomedicalqa_survey}, and it can help accelerate clinical decision making \cite{lee2020biobert}.
+
+The \textbf{PubMedQA dataset} \cite{jin2019pubmedqa} defines the task as a three-class classification problem. Given a research question and some paragraphs of a PubMed abstract, the task is to predict the answer as \textit{yes}, \textit{no} or \textit{maybe}. The expert-annotated dataset used for training and evaluation has 1{,}000 examples, out of which 552 (55.2\%) have a \textit{yes} answer and 338 (33.8\%) a \textit{no} answer, shown in Figure~\ref{fig:label_dist}. The \textit{maybe} case is underrepresented at 11\%.
+
+\reportfig
+{visualization_1_label_distribution.png}
+{PubMedQA label distribution. The minority \textit{maybe} class accounts for 11.0\% of instances, creating a severe class imbalance that affects every downstream classifier.}
+{fig:label_dist}
+
+Three possible reasons have been identified: \textbf{First}, the skewed distribution of the data could cause classifiers to over-predict the majority class. \textbf{Second}, \textit{maybe} captures epistemic uncertainty that is insufficient or inconclusive without being treated as a position between \textit{yes} and \textit{no}. Detecting it requires reasoning about evidence sufficiency, a harder task than detecting affirmative/negative lexical patterns. \textbf{Third}, short average question length (12.9 words) versus long average context length (200.2 words of dense biomedical jargon) dilutes bag-of-words models' discriminative signals \cite{huang2020clinicalbert}.
+
+We note that in exploratory analysis surface features are weak: question lengths and context lengths of each class overlap substantially, and a classifier trained only on such features does not perform well. This motivates our later analysis of quality prediction, which shows that handcrafted features have at best a small signal above chance.
+
+\paragraph{Central research question.} We run a sequence of experiments to identify the bottleneck behind PubMedQA performance, whether it is input representation or classifier choice, or simply the difficulty of predicting uncertainty in the \textit{maybe} class.
+
+\paragraph{Axis 1: Text Representation.} What effect does input composition (question only vs.\ question+context vs.\ question+context+answer) and encoding (TF-IDF vs.\ BioBERT/PubMedBERT) have on classifier performance?
+
+\paragraph{Axis 2 -- Classifier Design.} How does classifier choice, from classical models to transformers with specialized training objectives, affect the handling of class imbalance and the \textit{maybe}-class bottleneck?
+
+\paragraph{Contributions.} Our contributions are:
+\begin{enumerate}
+\item \textbf{A two-axis comparison of the 19 variants plus the baseline along each design axis} (A1a--g, A2a--e, A2g, A2i, A2j, M1--5), corresponding to each hypothesis to be tested. Each was implemented and evaluated under the Jin et al.\ (2019) 500/500 evaluation structure. Classical models used 10-fold stratified cross-validation whilst transformers used a held-out validation fold.
+\item A \textbf{breakdown of what contributions are made by the input composition, representation and fine-tuning}. This shows poor performance of TF-IDF ($\approx 0.35$ macro-F1 across all variations), and major improvements from BioBERT fine-tuning (0.466 with Q+Ctx+Ans) and PubMedBERT fine-tuning (0.604).
+\item A systematic \textbf{\textit{maybe}-class intervention comparison} (threshold tuning, focal loss, hierarchical, LoRA, ordinal loss) creates a clear \textit{maybe} vs overall trade-off. PubMedBERT focal loss model M2 achieves best \textit{maybe} F1 (0.24). A1g PubMedBERT FT wins overall macro-F1 (0.604) but scores a lower \textit{maybe} F1 (0.19).
+\item Further evidence from \textbf{McNemar's test}, pairwise Jaccard error overlap, K-Means cluster analysis, and example panels shows that \textit{maybe} errors arise because it is hard to tell whether there is enough evidence. This is supported by the fact that the quality predictor based on handcrafted surface features performs near chance.
+\end{enumerate}
+
+\subsection{Related Work}
+
+Biomedical QA has transitioned from rule-based extraction methods \cite{paliouras2013bioasq}, to transformer-based models. \textbf{BioBERT} \cite{lee2020biobert} set new benchmarks in multiple biomedical datasets, and \textbf{PubMedBERT} \cite{gu2021domainspecific} demonstrated the benefits of performing pre-training from scratch in the biomedical domain, as opposed to continued pre-training from a general-domain model. Similar results have been obtained for clinical notes on \textbf{ClinicalBERT} \cite{huang2020clinicalbert}.
+
+We also use BioBERT and PubMedBERT; Jin et al.\ \cite{jin2019pubmedqa} observe that PubMedQA is particularly hard in the three-class setup, where \textit{maybe} is the most challenging. This is confirmed by our error analysis. Related work includes transfer learning \cite{peng2019transferlearning}, retrieval augmentation \cite{frisoni2022bioreader}, text-to-text generation \cite{phan2021scifive} and sequence tagging \cite{yoon2022sequencetagging}. Our focus is on comparing design choices for text representation and classification and the interventions (e.g.\ \textit{maybe}-class intervention) that these designs enable.
+
+\section{Methods}
+
+The experimental pipeline is shown in Figure~\ref{fig:pipeline}, with text representation and classifier design as the two design axes, and preprocessing and evaluation fixed.
+
+\reportfig
+{pipeline.png}
+{Experimental pipeline. Both axes feed a shared evaluation stage. Classical models use 10-fold CV; transformers use a single validation fold (fold 0, $\sim$50 samples) due to compute cost.}
+{fig:pipeline}
+
+\subsection{Dataset and Preprocessing}
+
+Using the expert-annotated PubMedQA subset with 1{,}000 instances \cite{jin2019pubmedqa}, we programmatically create a 500-sample cross-validation set and a 500-sample test set following the 500/500 evaluation scheme used by Jin et al.\ \cite{jin2019pubmedqa} with random seed 42 for reproducibility. While these proportions are maintained, it is not guaranteed to be bitwise identical to Jin et al.'s PMID split.
+
+The 500 CV samples were further split into 10 stratified CV folds to form the internal tuning set. For tuning the transformer hyperparameters and choosing thresholds, \textbf{fold 0 was set aside as a development set}.
+
+Table~\ref{tab:dataset} gives a summary of the splits, which include a research question, paragraphs of context from a PubMed abstract, long-form answer, and a label. Text fields are lowercased, whitespace-normalised, and stripped of punctuation. Labels are encoded to integers: \textit{no}=0, \textit{maybe}=1, and \textit{yes}=2.
+
+\begin{table}[t]
+\centering
+\caption{PubMedQA splits (Jin et al.\ 2019 evaluation structure). Stratified sampling preserves label proportions across both halves.}
+\label{tab:dataset}
+\small
+\begin{tabular}{lcccl}
+\toprule
+\textbf{Split} & \textbf{Total} & \textbf{Yes} & \textbf{No} & \textbf{Maybe} \\
+\midrule
+CV (50\%)     & 500 & 276 & 169 & 55 \\
+Test (50\%)   & 500 & 276 & 169 & 55 \\
+\midrule
+\multicolumn{2}{l}{Full dataset: 1{,}000} & 552 & 338 & 110 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Baseline System}
+
+Baseline utilises \textbf{TF-IDF} (unigrams and bigrams) with a maximum of 30{,}000 features and English stop-words, and a \textbf{class-weighted Logistic Regression} classifier. The model uses the \texttt{question [SEP] context} as input.
+
+For interpretable handcrafted features, we use text lengths for the question and context, number of context sentences, and binary indicators for negation, causation, comparison, association, risk, evidence strength (e.g., \emph{significant}, \emph{demonstrated}), and hedging words (e.g., \emph{may}, \emph{suggest}, \emph{inconclusive}). We do not use features derived from long answers in the quality predictor analysis to avoid information leakage.
+
+\subsection{Axis 1: Text Representation}
+\label{sec:axis1}
+
+We are motivated by the hypothesis that the input fed to the classifier has a meaningful effect on performance, and we thus compare three variations: question only (Q), question plus context (Q+Ctx), question plus context plus long answer (Q+Ctx+Ans).
+
+We define the Axis-1 variants as follows:
+
+\paragraph{A1a (Question only).} Question only. Expected to perform worst: Context is required to answer.
+
+\paragraph{A1b (Q+Ctx).} The baseline composition, and tests to see if evidence paragraphs help classification.
+
+\paragraph{A1c (Q+Ctx+Ans, TF-IDF).} The long answer source is the authors' interpretation. We test if sparse TF-IDF can successfully capture this signal, even as a large biomedical vocabulary dilutes its effect.
+
+\paragraph{A1d (BioBERT Embeddings + LR).} We extract the 768-d BioBERT embeddings \cite{lee2020biobert} for the Q+Ctx input using a version of the biomedical sentence-transformer\footnote{\texttt{pritamdeka/BioBERT-mnli-snli-scinli-scitail-mednli-stsb} on HuggingFace.} and train a logistic regression classifier with class-weighting. This tests whether dense semantic representations outperform sparse vocabulary features when used on the same classifier.
+
+\paragraph{A1e (BioBERT FT, Q+Ctx).} BioBERT fine-tuning reference on Q+Ctx, same tokeniser as A1f below.
+
+\paragraph{A1f (BioBERT FT, Q+Ctx+Ans).} Same model family as A1e except the task input is Q+Ctx+Ans. The contrast A1e vs A1f isolates the main effect of adding the long answer on a fixed model.
+
+\paragraph{A1g (PubMedBERT FT, Q+Ctx+Ans).} This tests whether stronger in-domain pre-training (\path{microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract}) further improves performance over BioBERT on the same input.
+
+\paragraph{Note on Q+Ctx+Ans.} The long answer is a human-written summary that often contains explicit answer-indicative wording, so A1c, A1f, and A1g should be interpreted as an \emph{improved-input setting} rather than pure question-over-abstract reasoning. We include it because it is a standard PubMedQA field, and because it cleanly decomposes into an Axis-1 intervention.
+
+\subsection{Axis 2: Classifier Design}
+\label{sec:axis2}
+
+For all classical Axis-2 models, we use combined word- and character-level TF-IDF as the base representation over Q+Ctx ($\sim$70{,}000 features). For transformer-based Axis-2 models, we use Q+Ctx+Ans as input when specified in the main text.
+
+\paragraph{A2a--c (Tuned LR, Calibrated SVM, Multinomial NB).} A2a--c use inner 5-fold grid searches: LR uses $C \in \{0.05, 0.1, 0.5, 1.0, 2.0, 5.0\}$, SVM uses $C \in \{0.01, 0.05, 0.1, 0.5, 1.0, 2.0\}$, and Multinomial NB uses $\alpha \in \{0.05, 0.1, 0.25, 0.5, 1.0, 2.0\}$. A2b additionally tunes a \textit{maybe} decision threshold on the development fold after calibration.
+
+\paragraph{A2d (SMOTE+LR).} Applied within each cross-validation fold to prevent leakage. This tests whether synthetic minority oversampling recovers \textit{maybe}.
+
+\paragraph{A2e (Soft-voting ensemble).} LR + calibrated SVM + NB. Tests whether averaging TF-IDF classifiers improves performance.
+
+\paragraph{A2g (BioBERT HP-tuned).} Grid search over lr $\in \{1,2,3,5\}{\times}10^{-5}$ and max\_len $\in \{256,384\}$, selected by development macro-F1 (best: lr$={}3{\times}10^{-5}$, max\_len${}={}384$, val F1${}={}0.537$).
+
+\paragraph{A2i (LoRA PubMedBERT).} Model fine-tuned with low-rank adaptation (LoRA; rank 8, $\alpha$=16, dropout=0.1 on query/value projections) that reduces trainable parameters by ${\sim}99.7\%$ (\textbf{297{,}219 of 109{,}781{,}766}). Tests whether lightweight adaptation suffices.
+
+\paragraph{A2j (Zero-Shot BART-MNLI).} For A2j, tests were run with \texttt{facebook/bart-large-mnli} and the hypothesis template \emph{``The answer to this medical question is \{label\}''}. No training was run; off-the-shelf probes performed NLI.
+
+\paragraph{Class-weighted cross-entropy (used by all transformer FT runs).}
+\begin{equation}
+\mathcal{L}_{\text{CE}} = -\!\!\sum_{i=1}^{N}\! w_{y_i}\!\log \hat{p}(y_i\!\mid\! x_i),\ \ w_c\!=\!\tfrac{N}{K\cdot n_c}
+\label{eq:loss}
+\end{equation}
+with $N$ the total sample count, $K=3$, and $n_c$ the count of class $c$.
+
+\paragraph{M1 (BioBERT Q+Ctx+Ans + threshold tuning).} Decision threshold (best 0.350 on fold 0) applied to softmax probabilities of A1f of BioBERT Q+Ctx+Ans.
+
+\paragraph{M2 (PubMedBERT + Focal Loss).} For M2, a class-weighted version of focal loss \cite{lin2017focal} with $\gamma = 2$ was applied instead of cross-entropy loss. Focal loss down-weights easy examples, so the gradient mostly comes from hard examples. Intuitively, this should help minority classes:
+\begin{equation}
+\mathcal{L}_{\text{focal}} = -\!\!\sum_{i}\! w_{y_i}(1-p_{y_i})^{\gamma}\!\log p_{y_i}.
+\label{eq:focal}
+\end{equation}
+
+\paragraph{M3 (PubMedBERT Focal + Threshold).} The probabilities from M2 after applying a post-hoc \textit{maybe} threshold (0.500 on fold 0).
+
+\paragraph{M4 (PubMedBERT ordinal-aware loss).} The labels of \textit{no} $<$ \textit{maybe} $<$ \textit{yes} are ordered. \textit{Yes} vs.\ \textit{no} is more clinically important than \textit{maybe} vs.\ either, so the ordinal-aware loss is used. We add a penalty based on the expected ordinal position using MSE:
+\begin{equation}
+\mathcal{L}_{\text{ord}} = \mathcal{L}_{\text{CE}} + \alpha\cdot\mathbb{E}\!\left[(\hat{y}_{\text{ord}} - y_{\text{ord}})^2\right]
+\label{eq:ordinal}
+\end{equation}
+where $\hat{y}_{\text{ord}}=\sum_c c\cdot p(c\mid x)$ and $\alpha=1.0$.
+
+\paragraph{M5 (Hierarchical).} Two-stage classifier with \textbf{Stage 1} separating \textit{maybe} from \textit{yes/no} samples and \textbf{Stage 2} classifying \textit{yes/no} samples into respective classes. Tests for whether decomposition is helpful.
+
+\subsection{Quality Predictor}
+
+With only surface features, can we predict the correctness of the baseline? We train Random Forest, MLP and Logistic Regression classifiers on a cross-validated training set of the baseline correctness labels using the 10 surface features in Section 2.2.
+
+We evaluate these classifiers on a held-out test set of correctness labels. This is an exploratory analysis: \textbf{If even weak classifiers produce errors correlated with simple input features, an input-based abstention policy makes sense; if not, routing based on confidence is preferable.}
+
+\section{Experimental Evaluation}
+
+\subsection{Metrics and Setup}
+
+We report \textbf{macro-F1} as our primary measure, because the \textit{maybe} class is very imbalanced, and accuracy (the accuracy of a classifier that always predicts \textit{yes} is $\approx 55\%$) is not useful. We also report per-class F1, overall accuracy, McNemar's test for paired statistical significance, Jaccard error model overlap, and K-Means cluster analysis.
+
+All performance scores in this section come from the 500-sample held-out test set in Table~\ref{tab:eval_setup} (where applicable, the mean of the 10 stratified CV folds is used for cross validation (CV) to produce a more reproducible score). Default transformer fine-tuning parameters were a batch size of 8, early stopping (patience of 2), macro-F1 validation-based checkpoint selection, weight decay 0.01, fp16, random seed 42, and (unless notably tuned) a max sequence length of 384, with training running up to 8 epochs.
+
+\begin{table}[t]
+\centering
+\caption{Experimental setup.}
+\label{tab:eval_setup}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Detail} \\
+\midrule
+Primary metric & Macro-F1 \\
+Secondary metrics & Accuracy, per-class F1 \\
+CV strategy & 10-fold stratified on 500 CV set \\
+Held-out test & 500 samples, evaluated once \\
+Transformer dev fold & fold 0 ($\approx 50$ samples) \\
+Significance test & McNemar (paired) \\
+Class weighting & Inverse-frequency (Eq.~\ref{eq:loss}) \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Core software:} Scikit-learn, HuggingFace,} \\
+\multicolumn{2}{@{}l}{\quad imbalanced-learn, SentenceTransformers, PEFT} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Baseline Results}
+
+The TF-IDF + LR baseline achieves a \textbf{10-fold CV macro-F1 of 0.343 $\pm$ 0.053} and a \textbf{test macro-F1 of 0.348} (accuracy of 50.6\%, below the 55\% majority-class floor on accuracy). The classifier exhibits the failure mode that is typical of bag-of-words classifiers on this task, over-predicting \textit{yes} and \textit{no}, and almost never predicting \textit{maybe}: for example, it finds only 2 of the 55 true \textit{maybe} samples. Per-class F1 is $\{F1_{\text{no}}{=}0.36,\ F1_{\text{maybe}}{=}0.06,\ F1_{\text{yes}}{=}0.63\}$.
+
+This is indicative of a representation, rather than data, bottleneck: the macro-F1 on the training set reaches saturation (1.00) from the fold size of 40. On the validation set, it plateaus at $\approx 0.34$ (gap of 0.66), while sparse n-grams were memorising the training set and not generalising.
+
+\subsection{Axis 1 Results: Text Representation}
+
+TF-IDF models only benefit marginally: \textbf{Q 0.360}, \textbf{Q+Ctx 0.348}, \textbf{Q+Ctx+Ans 0.366}, with either context or long answer having no benefit on a sparse model. This suggests that discriminative clues are outnumbered by the large biomedical vocabulary.
+
+Replacing sparse TF-IDF with BioBERT sentence embeddings and the same Logistic Regression classifier (A1d) yields a macro-F1 of \textbf{0.353} and raises \textit{maybe} F1 to \textbf{0.172}. This shows that representation is a key factor for minority recovery even if F1 is unchanged.
+
+The largest performance gain appears during fine-tuning. Changing the input from Q+Ctx (A1e, F1${}={}0.294$) to answer-inclusive Q+Ctx+Ans (A1f, F1${}={}0.466$) increases the macro-F1 score by $+0.17$ as well as \textit{maybe} F1 from 0.000 to 0.101.
+
+If we fix the input to Q+Ctx+Ans and change the backbone from BioBERT (A1f) to PubMedBERT (A1g), both the macro-F1 score and \textit{maybe} F1 score improve by $+0.14$ to \textbf{0.604} and \textbf{0.192}, respectively. These two clean swaps (input and backbone) accounted for the bulk of this increase.
+
+\reportfig
+{axis1_final_representation_story.png}
+{Axis 1 representation story. Sparse TF-IDF input variants cluster at 0.34--0.37 macro-F1; switching to BioBERT embeddings + LR adds a marginal lift but a sizeable gain in \textit{maybe} F1; transformer fine-tuning with Q+Ctx+Ans (A1f) and especially in-domain PubMedBERT pre-training (A1g) yields the largest single jumps.}
+{fig:axis1_story}
+
+Figure~\ref{fig:axis1_story} illustrates the progression of the model: sparse TF-IDF variants cluster around 0.34--0.37 macro-F1 regardless of input. BioBERT embeddings + LR give a small improvement over sparse TF-IDF only. Input enrichment and fine-tuning a domain-specific backbone give an additional increase in isolation, but the largest improvement is gained together.
+
+\reportfig
+{visualization_8_axis1_test_macro_f1.png}
+{Axis 1 test macro-F1 by configuration. The TF-IDF variants remain very close in macro-F1; the gap to A1f and A1g shows that transformer fine-tuning is the dominant Axis-1 lever once Q+Ctx+Ans is available.}
+{fig:axis1_macrof1}
+
+\begin{table}[t]
+\centering
+\caption{Decomposing the gain from baseline to the best observed model.}
+\label{tab:decompose}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{4.8cm}cc@{}}
+\toprule
+\textbf{Configuration} & \textbf{Test F1} & \textbf{$\Delta$} \\
+\midrule
+TF-IDF + LR, Q+Ctx (baseline)                      & 0.348 & --- \\
++ Q+Ctx+Ans (still TF-IDF)                         & 0.366 & $+0.018$ \\
++ BioBERT embeddings (still LR)                    & 0.353 & $-0.013$ \\
++ BioBERT FT, Q+Ctx (A1e)                          & 0.294 & $-0.060$ \\
++ Q+Ctx+Ans (BioBERT FT, A1f)                      & 0.466 & $+0.172$ \\
++ PubMedBERT backbone (A1g)                        & \textbf{0.604} & $+0.138$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Axis 2 Results: Classifier Performance}
+
+Three sparse TF-IDF classifiers---a tuned LR (A2a), a calibrated SVM (A2b), and a Multinomial NB (A2c)---and SMOTE+LR (A2d) fall into the same bracket \textbf{0.26--0.36 macro-F1}, confirming that the choice of a classifier on sparse features does not break the plateau. However, the calibrated SVM classifier (A2b) fell to almost always predicting \textit{yes} (F1${}={}0.264$) and obtained the minimum \textit{no} F1 (0.093), confirming that calibration on a biased classifier does not fix the bias.
+
+\paragraph{SMOTE (A2d).} In each fold of the cross-validation experiment, the classifier SMOTE+LR scored CV 0.365 and test 0.346. Oversampling the synthetic minority points in a highly-dimensional, sparse space fails to create meaningful linguistic differences for a bag-of-words classifier.
+
+\paragraph{Zero-shot BART-MNLI (A2j).} Despite \textbf{0.074 macro-F1} and 11.4\% accuracy, hedged biomedical language predicted as a confident NLI label of \emph{neutral} (498/500). Off-the-shelf NLI transfer does not work for this task without task-specific fine-tuning or calibration.
+
+\paragraph{Fine-tuned transformers.} HP-tuned BioBERT (A2g, lr$={}3{\times}10^{-5}$, max\_len${}={}384$) achieves a test macro-F1 of \textbf{0.474}. However, it fails to recover the \textit{maybe} class on the test set (F1${}={}0.000$). A1g PubMedBERT (Q+Ctx+Ans) is \textbf{0.604} with accuracy 75.4\%, \textit{maybe} F1${}={}0.192$. Adding a focal loss to PubMedBERT (M2, with answer passages as input) increases \textit{maybe} F1 to \textbf{0.237} but decreases macro-F1 to 0.591. Validation-tuned threshold for M2 (M3) achieves \textbf{77.0\% (the highest across all classifiers)}; though, \textit{maybe} F1 collapses to 0.094, and the fold-0 threshold optimum does not transfer cleanly to the held-out test set.
+
+\paragraph{Ordinal loss (M4).} Ordinal loss (M4), with mean squared error on the expected ordinal class, lowered \textit{maybe} F1 to 0.079 and increased \textit{yes}-\textit{no} confusion from 47 (standard PubMedBERT FT) to \textbf{63}. Macro-F1 is 0.547. At $\alpha{=}1$ it penalises correct \textit{maybe} predictions that have any mass on \textit{yes} or \textit{no}, squeezing the middle class out rather than regularising it.
+
+\paragraph{Hierarchical (M5).} Stage 1 learned essentially no uncertainty detector on our training folds (predicting \textbf{zero \textit{maybe}} on the test folds), which is why all final predictions defaulted to Stage 2. With final macro-F1${}={}0.479$ and \textit{maybe} F1${}={}0.000$, decomposing the problem fails if Stage 1 cannot find enough \textit{maybe} examples to learn the binary boundary.
+
+\paragraph{LoRA PubMedBERT (A2i).} LoRA PubMedBERT (A2i) achieved \textbf{0.340 macro-F1} with 0.27\% ($\approx 297$K of 109M) trainable parameters, which is not as good as fully fine-tuned PubMedBERT (A1g, 0.604), but well above the zero-shot floor. This indicates that the rank-8 adapters do learn some aspects of the task, even on this small dataset.
+
+\paragraph{M1 (BioBERT QCA + threshold).} Tuning of A1f probabilities yields a macro-F1 of 0.472 and a \textit{maybe} F1 of 0.161, an increase from A1f's 0.101 \textit{maybe} F1, but overall macro-F1 is lower.
+
+The PubMedBERT-backbone variants are of the highest tier, the BioBERT-backbone variants are of the second tier, while LoRA and zero-shot are clearly the lowest tier.
+
+\reportfig
+{axis2b_training_strategy_macro_f1.png}
+{Axis 2B macro-F1 by training strategy. The PubMedBERT cluster (A1g, M2--M4) dominates; BioBERT-based variants (A1f, A2g, M1) form a middle tier; LoRA (A2i) and zero-shot BART-MNLI (A2j) are well below.}
+{fig:axis2b_macrof1}
+
+\subsection{Overall Model Ranking}
+
+The per-class F1 scores in Table~\ref{tab:results} reveal \textbf{four consistently high-ranked groups}: PubMedBERT-based transformers on Q+Ctx+Ans (0.55--0.60), HP-tuned/hierarchical/threshold-tuned variations (0.47--0.48), BioBERT FT Q+Ctx+Ans, BioBERT-embedding and SMOTE baselines (0.35--0.47), and sparse classical, LoRA, and zero-shot ($\le 0.36$) methods.
+
+No model wins all columns: A1g wins macro-F1/\textit{no}-F1, M3 wins accuracy, and M2 wins \textit{maybe}-F1/\textit{yes}-F1. Hence, the trade-off can be made explicit.
+
+\begin{table*}[t]
+\centering
+\caption{Main results on the 500-sample test set, sorted by macro-F1. All main configurations are shown; weaker traditional variants appear in the lower half of the ranking. Bold indicates the best value per column.}
+\label{tab:results}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{8pt}
+\begin{tabular}{llcccccc}
+\toprule
+\textbf{Label} & \textbf{Model} & \textbf{Acc} & \textbf{F1} & \textbf{F1\textsubscript{no}} & \textbf{F1\textsubscript{maybe}} & \textbf{F1\textsubscript{yes}} \\
+\midrule
+A1g           & PubMedBERT FT (Q+Ctx+Ans)     & 0.754          & \textbf{0.604} & \textbf{0.797} & 0.192          & 0.822 \\
+M2            & PubMedBERT + Focal Loss       & 0.728          & 0.591          & 0.694          & \textbf{0.237} & \textbf{0.842} \\
+M3            & PubMedBERT Focal + Threshold  & \textbf{0.770} & 0.568          & 0.768          & 0.094          & 0.841 \\
+M4            & PubMedBERT Ordinal Loss       & 0.734          & 0.547          & 0.752          & 0.079          & 0.811 \\
+\midrule
+M5            & Hierarchical (BioBERT)        & 0.690          & 0.479          & 0.672          & 0.000          & 0.765 \\
+A2g           & BioBERT HP-Tuned              & 0.674          & 0.474          & 0.668          & 0.000          & 0.754 \\
+M1            & BioBERT QCA + Threshold       & 0.574          & 0.472          & 0.592          & 0.161          & 0.664 \\
+A1f           & BioBERT FT (Q+Ctx+Ans)        & 0.606          & 0.466          & 0.632          & 0.101          & 0.664 \\
+\midrule
+A1c           & Q+Ctx+Ans (TF-IDF + LR)       & 0.518          & 0.366          & 0.378          & 0.083          & 0.638 \\
+A1a           & Q-only (TF-IDF + LR)          & 0.498          & 0.360          & 0.356          & 0.101          & 0.623 \\
+A1d           & BioBERT Embeddings + LR       & 0.432          & 0.353          & 0.337          & 0.172          & 0.555 \\
+A1b           & Baseline (Q+Ctx, TF-IDF+LR)   & 0.506          & 0.348          & 0.358          & 0.057          & 0.628 \\
+A2d           & SMOTE + LR                    & 0.518          & 0.346          & 0.366          & 0.031          & 0.640 \\
+A2i           & LoRA PubMedBERT               & 0.406          & 0.340          & 0.457          & 0.143          & 0.420 \\
+A2a           & Tuned LR (word+char TF-IDF)   & 0.532          & 0.338          & 0.314          & 0.035          & 0.664 \\
+A2e           & Soft Voting Ensemble          & 0.532          & 0.324          & 0.266          & 0.036          & 0.671 \\
+A2c           & Multinomial NB                & 0.516          & 0.322          & 0.279          & 0.035          & 0.652 \\
+A1e           & BioBERT FT (Q+Ctx)            & 0.524          & 0.294          & 0.209          & 0.000          & 0.667 \\
+A2b           & Calibrated SVM + threshold    & 0.544          & 0.264          & 0.093          & 0.000          & 0.700 \\
+A2j           & Zero-Shot BART-MNLI           & 0.114          & 0.074          & 0.023          & 0.199          & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Per-Class F1 Analysis}
+
+\reportfig
+{axis2b_per_class_tradeoff.png}
+{Per-class F1 trade-off across Axis-2B training strategies. The \textit{maybe} bar is the visible bottleneck for almost every model. M2 PubMedBERT focal loss has the tallest \textit{maybe} bar (0.237) but a slightly shorter \textit{no} bar than A1g; A1g has the most balanced overall profile.}
+{fig:axis2b_tradeoff}
+
+Figure~\ref{fig:axis2b_tradeoff} confirms that in almost every TF-IDF model and the ordinal/hierarchical models, the \textit{maybe} column is near-zero, and is therefore the major performance bottleneck. \textbf{Only five models had \textit{maybe} F1 ${\ge}0.15$} and just one model (M2 PubMedBERT) had ${>}0.2$ \textit{maybe} F1.
+
+The model that achieved the best macro-F1 score, A1g, was not the model that achieved the best \textit{maybe} F1, M2 PubMedBERT + Focal Loss. This suggests a trade-off between class-balanced performance, and performance on the minority \textit{maybe} class.
+
+\subsection{Error Analysis}
+
+\subsubsection{Class Confusion Patterns}
+
+The confusion matrix for the overall best model (A1g) can be seen in Figure~\ref{fig:best_cm}. Out of the total of 169 true \textit{no} samples, 141 were correctly classified as \textit{no}, 12 as \textit{maybe} and 16 as \textit{yes}. Out of 55 true \textit{maybe} samples, 9 were predicted as \textit{maybe}, 13 as \textit{no}, and 33 as \textit{yes}. Out of 276 true \textit{yes} samples, 227 were predicted as \textit{yes}, 18 as \textit{maybe}, and 31 as \textit{no}.
+
+In the \textit{yes}$\leftrightarrow$\textit{no} reversals, there are 47 misclassification errors (16 \textit{no}$\to$\textit{yes} and 31 \textit{yes}$\to$\textit{no}). This type of error is the \textbf{most clinically problematic} because the treatment recommendation is reversed. The 33 \textit{maybe}$\to$\textit{yes} and 13 \textit{maybe}$\to$\textit{no} transitions are part of the greatest residual error mode, forcing \textbf{83.6\% of the true \textit{maybe} cases} to be either \textit{yes} or \textit{no}.
+
+\reportfig
+{visualization_error_confusion_matrix.png}
+{Confusion matrix --- A1g PubMedBERT FT (Q+Ctx+Ans), Test Set, n=500. True \textit{no}: 141/12/16; true \textit{maybe}: 13/9/33; true \textit{yes}: 31/18/227. Yes$\leftrightarrow$no reversals total 47 cases.}
+{fig:best_cm}
+
+\subsubsection{Statistical Significance}
+
+For the paired McNemar's test of the 500 sample test set between baseline and A1g, we find: a) A1g correct and baseline wrong \textbf{164 times}; b) baseline correct and A1g wrong \textbf{40 times} ($b{=}164$, $c{=}40$, $p{<}0.0001$)---this difference is statistically significant.
+
+\subsubsection{Representative Misclassified Examples}
+\label{sec:qualitative}
+
+The four most frequent patterns are shown in Table~\ref{tab:errors}. \textit{Yes}$\to$\textit{no} and \textit{no}$\to$\textit{yes} errors are \emph{direction-of-evidence} errors, where the model reverses the evidence direction. These \textit{maybe}$\to$\textit{yes/no} cases, despite class weighting, suggest the model is forcing weak evidence into a \textit{yes/no} dichotomy, indicating the signals it is receiving have intrinsic limitations regarding what counts as sufficient evidence.
+
+\begin{table}[t]
+\centering
+\caption{Representative misclassified examples from A1g (shortened).}
+\label{tab:errors}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{@{}L{1.35cm}L{3.55cm}cc@{}}
+\toprule
+\textbf{Pattern} & \textbf{Question (shortened)} & \textbf{True} & \textbf{Pred} \\
+\midrule
+yes$\to$no    & Double balloon enteroscopy: efficacious and safe in community? & yes & no  \\
+\addlinespace[2pt]
+no$\to$yes    & Long-term results of transanal vs transabdominal pull-through equal? & no & yes \\
+\addlinespace[2pt]
+maybe$\to$yes & 30-Day mortality emergency laparotomies: an area of concern? & maybe & yes \\
+\addlinespace[2pt]
+maybe$\to$no  & HPV and pterygium: virus a risk factor?                       & maybe & no  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These are not simple lexical errors; \textit{yes/no} errors flipped the sign of the evidence, and \textit{maybe} errors occurred when the model forced uncertain evidence to take a deterministic value.
+
+\subsubsection{Cross-Model Error Overlap}
+
+\textbf{66 examples (13.2\%)} are misclassified by all four models across A1g, M2, M3, and M4, indicating a common hard subset for the current transformer family on this split. Likewise, errors shared by the PubMedBERT-backbone variants A1g, M2, M3 and M4 suggest that ensembling within the transformer family has limited headroom.
+
+Thus, an ensemble of PubMedBERT and BioBERT models, where the BioBERT model is an A1f or M1 model, is more promising if the errors from both models are not correlated.
+
+\subsubsection{Cluster-Based Error Analysis}
+
+Following K-Means clustering on the BioBERT sentence embeddings of the test set into four semantic clusters, A1g's macro-F1 varies across clusters, ranging from \textbf{0.544} (cluster 3 with 142 samples and 9 \textit{maybe}, $F1_{\text{maybe}}{=}0.105$) to \textbf{0.630} (cluster 2 with 100 samples and 15 \textit{maybe}).
+
+For example, cluster 2 reaches $F1_{\text{maybe}}{=}0.250$, while cluster 1 reaches \textbf{0.231} and cluster 0 reaches \textbf{0.160}. This discrepancy in cluster performance suggests that there are some semantic regions of the embedding space that are much more uncertainty-heavy than others, and that per-cluster decision rules could, in principle, lift minority-class recovery further.
+
+\subsection{Quality Predictor Results}
+
+The three predictors on surface features all perform poorly (e.g., macro-F1 scores of \textbf{0.538, 0.516, and 0.480} for the LR, RF, and MLP classifiers respectively predicting baseline correctness). However, LR and RF are only slightly above the $\approx 0.50$ majority-correct chance floor. The neural baseline has the worst performance.
+
+\reportfig
+{Quality_Predictor_Feature_Importance.png}
+{Random Forest feature importance for the quality predictor over the 10 handcrafted features. Context length and question length dominate; surface hedging and negation contribute little, consistent with the view that baseline errors are not well predicted by shallow input characteristics.}
+{fig:quality_features}
+
+Feature importance (RF, Figure~\ref{fig:quality_features}): \textbf{context length (0.439)}, \textbf{question length (0.290)}, number of contexts (0.089), evidence strength (0.047), hedging (0.038) are relevant. Negation has essentially no effect (0.002).
+
+This suggests that shallow input characteristics, such as input size, length and density, are not strong predictors of baseline errors.
+
+As with our Axis-1 results, for error prediction to generalise, it must depend on \emph{model-internal uncertainty signals} like softmax entropy and margin, rather than the inputs to the model. This means that, in deployment, low confidence model outputs should go to human review, rather than be rejected due to input length heuristics.
+
+\section{Discussion}
+
+\paragraph{Why Q+Ctx+Ans helps transformers but not TF-IDF.} In short, our findings suggest that Q+Ctx+Ans cues like \emph{``associated with''}, \emph{``may be safe''}, or \emph{``further investigation is warranted''} are discourse-level cues that help more contextual models like transformers than non-contextual models like TF-IDF. However, TF-IDF treats these as isolated tokens, so their signal is diluted by the wider biomedical vocabulary.
+
+By conditioning on these cues using an attention-based encoder, we lifted BioBERT macro-F1 from 0.294 (A1e, Q+Ctx) to 0.466 (A1f, Q+Ctx+Ans) merely by modifying the inputs. Biomedical NLP systems that assume abstracts have all the practical signal have likely been leaving this lift on the table.
+
+\paragraph{The choice of backbone is critical.} In the transformer setting, swapping out the BioBERT (A1f) backbone for the PubMedBERT (A1g) one on the same Q+Ctx+Ans input yields a macro-F1 increase of approximately \textbf{0.14 points}. Adding focal loss (M2) to PubMedBERT lowers macro-F1 by 0.013 but raises \textit{maybe} F1 by 0.045.
+
+Ordinal loss (M4) and hierarchical decomposition (M5) further decrease performance on this subset. Loss engineering cannot compensate for the larger, better-adapted pre-training distribution.
+
+\paragraph{The overall vs.\ minority trade-off is genuine.} No model is superior in all metrics, but \textbf{A1g PubMedBERT} gives the best macro-F1. \textbf{M3 (focal + threshold)} maximises accuracy (0.770), but loses nearly all recall on the \textit{maybe} label. \textbf{M2 (PubMedBERT focal loss)} maximises F1 across the \textit{maybe} and \textit{yes} labels.
+
+This suggests that tuning the threshold on a 50-sample dev fold is not robust, and that whether to use A1g, M2 or M3 will depend on whether it is more costly to miss uncertainty or to contradict a recommendation.
+
+\paragraph{Why our ordinal loss did not help this run.} Note that ordinal penalties have been shown to reduce severe-class confusion. At $\alpha{=}1.0$ and given about 50 \textit{maybe} samples in the transformer training folds, the model largely suppresses \textit{maybe}.
+
+With inverse-frequency weighting, a sparse minority and penalty on the MSE term (that discourages remaining probability mass on extreme classes), we can effectively forbid the model from preferring \textit{maybe} over the majority. This may be recoverable using a smaller $\alpha$, a clipped distance penalty, threshold tuning, or combining ordinal loss with focal-style reweighting.
+
+\paragraph{Practically speaking.} Sparse TF-IDF baselines train in seconds on a commodity CPU, while fine-tuning the full transformer requires a GPU and several orders of magnitude more compute.
+
+For exploratory scenarios, A1g's increase of $+0.26$ macro-F1 over the baseline is worth the cost incurred. In deployment scenarios with hard compute budget (Section 4.2), this may create a trade-off between predictive performance, minority class recovery, and compute efficiency.
+
+LoRA is one such trade-off between the extremes, but as we show, this result (0.340) does not match full fine-tuning at these dataset scales.
+
+\subsection{Limitations}
+
+\paragraph{Dataset constraints.} With only 55 \textit{maybe} samples in our 500/500 split, we are limited in our training signal and our ability to accurately evaluate each of the classes. Since we rebuild our split protocol-consistently rather than loading exact published PMID lists, our split is not a perfect bit-for-bit match to Jin et al.'s.
+
+\paragraph{Evaluation constraints.} Classical models use full 10-fold CV. Because transformers only use a single fold-0 validation split, owing to GPU memory costs, their tuning stability is less well estimated. Thus, the ordering should be interpreted to imply their performance on the held-out test set, rather than the ranking that should be deployed in practice.
+
+\paragraph{Methodological constraints.} A2g's transformer hyperparameter search was limited to 8 learning-rate / max-length combinations, but larger budgets, more random seeds and broader loss function sweeps could yield more stable results.
+
+Notably, the ordinal and hierarchical variants were only evaluated with a single Q+Ctx+Ans parameterisation; we did not sweep over $\alpha$ values, Stage-1 thresholds, or other hierarchical decision rules. Calibration analysis (ECE, reliability diagrams, temperature scaling) is well-motivated, and we intend to pursue this for future work; however, given our compute budget, we could not investigate this across different models (beyond those already reported in this paper).
+
+\paragraph{Input-composition caveat.} Because Q+Ctx+Ans contains the human-written long answer (which often contains answer-indicative language), improved-input transformer results (A1c, A1f, A1g, M1--M5) cannot be interpreted as biomedical question answering that is purely abstract-only. These can be treated as an upper bound for a system with author conclusions available at inference time.
+
+\subsection{Future Work}
+
+Natural next steps:
+\begin{enumerate}
+\item Evaluate A1g+M2 and cross-backbone ensembles such as M1 BioBERT + A1g PubMedBERT to target the macro-F1 vs \textit{maybe}-recall trade-off.
+\item \textbf{Semi-supervised learning} on the 211k unlabelled PubMedQA examples.
+\item \textbf{Temperature scaling or MC-dropout} for clinical use.
+\item Sweeping through the \textbf{ordinal penalty $\alpha$} and considering clipped or focal-weighted ordinal versions.
+\item \textbf{Abstention based on softmax margin}, sending low-confidence cases to human review.
+\end{enumerate}
+
+\section{Conclusions}
+
+On PubMedQA, we evaluated 19 model variations plus the baseline under the two axes of \textbf{text representation} and \textbf{classifier design} using the 500/500 evaluation scheme of Jin et al.\ (2019) with 10-fold stratified CV for classical models and a held-out validation fold for transformer models for hyperparameter tuning.
+
+Our findings are as follows:
+
+\textbf{First}, input composition interacts with model capacity: adding the long answer does not improve TF-IDF baseline performance (0.35--0.37 macro-F1). On the other hand, BioBERT fine-tuned on Q+Ctx+Ans increases to 0.466 from 0.294 with Q+Ctx input, while PubMedBERT increases to 0.604 with Q+Ctx+Ans as input. In the transformer case, backbone swap (BioBERT$\to$PubMedBERT) with fixed input provides a gain comparable with input swap with fixed backbone, indicating two complementary representation factors.
+
+\textbf{Second}, A1g PubMedBERT FT (Q+Ctx+Ans), the overall-best model, attained a macro-F1 score of \textbf{0.604 (75.4\% accuracy)} on the 500-sample held-out test set, statistically considerably better than baseline (McNemar $p{<}0.001$). However, its \textit{maybe} F1 score (0.192) is lower than that of M2 PubMedBERT focal (0.237). \emph{There is no free lunch}: overall balance and minority recovery trade off. M3 achieves higher accuracy than A1g, but this comes at the cost of near-total \textit{maybe} suppression.
+
+\textbf{Third}, \textit{maybe} remains a residual bottleneck: the best overall model predicts \textit{maybe} only 39 times and correctly recovers just 9 of the 55 true \textit{maybe} samples. This suggests that evidence-sufficiency reasoning is not fully captured by either bag-of-words features or the current transformer losses. This is consistent with the quality-predictor results, where models relying only on surface features perform only marginally above chance.
+
+Therefore, medical QA evaluation should look beyond headline macro-F1 and also consider \textbf{error type distribution}, \textbf{minority-class recovery}, and \textbf{cross-model error overlap}.
+
+\begin{thebibliography}{10}
+
+\bibitem{jin2022biomedicalqa_survey}
+Qiao Jin, Zheng Yuan, Guangzhi Xiong, Qianlan Yu, Huaiyuan Ying, Chuanqi Tan, Mosha Chen, Songfang Huang, Xiaozhong Liu, and Sheng Yu.
+\newblock Biomedical question answering: A survey of approaches and challenges.
+\newblock {\em ACM Computing Surveys}, 55(2):1--36, 2022.
+
+\bibitem{lee2020biobert}
+Jinhyuk Lee, Wonjin Yoon, Sungdong Kim, Donghyeon Kim, Sunkyu Kim, Chan~Ho So, and Jaewoo Kang.
+\newblock {BioBERT}: a pre-trained biomedical language representation model for biomedical text mining.
+\newblock {\em Bioinformatics}, 36(4):1234--1240, 2020.
+
+\bibitem{paliouras2013bioasq}
+George Paliouras and Anastasia Krithara.
+\newblock {BioASQ}: A challenge on large-scale biomedical semantic indexing and question answering.
+\newblock BioASQ Workshop slides, Valencia, 27 September 2013.
+
+\bibitem{jin2019pubmedqa}
+Qiao Jin, Bhuwan Dhingra, Zhengping Liu, William~W. Cohen, and Xinghua Lu.
+\newblock {PubMedQA}: A dataset for biomedical research question answering.
+\newblock In {\em Proceedings of EMNLP-IJCNLP}, pages 2567--2577, 2019.
+
+\bibitem{huang2020clinicalbert}
+Kexin Huang, Jaan Altosaar, and Rajesh Ranganath.
+\newblock {ClinicalBERT}: Modeling clinical notes and predicting hospital readmission.
+\newblock In {\em Proceedings of the ACM CHIL Workshop Track}, pages 1--9, 2020.
+
+\bibitem{gu2021domainspecific}
+Yu~Gu, Robert Tinn, Hao Cheng, Michael Lucas, Naoto Usuyama, Xiaodong Liu, Tristan Naumann, Jianfeng Gao, and Hoifung Poon.
+\newblock Domain-specific language model pretraining for biomedical natural language processing.
+\newblock {\em ACM Transactions on Computing for Healthcare}, 3(1):1--23, 2021.
+
+\bibitem{lin2017focal}
+Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Doll{\'a}r.
+\newblock Focal loss for dense object detection.
+\newblock In {\em Proceedings of ICCV}, pages 2980--2988, 2017.
+
+\bibitem{peng2019transferlearning}
+Yifan Peng, Shankai Yan, and Zhiyong Lu.
+\newblock Transfer learning in biomedical natural language processing: An evaluation of {BERT} and {ELMo} on ten benchmarking datasets.
+\newblock In {\em Proceedings of the 18th BioNLP Workshop and Shared Task}, pages 58--65, 2019.
+
+\bibitem{frisoni2022bioreader}
+Giacomo Frisoni, Miki Mizutani, Gianluca Moro, and Lorenzo Valgimigli.
+\newblock {BIOREADER}: a retrieval-enhanced text-to-text transformer for biomedical literature.
+\newblock In {\em Proceedings of EMNLP}, pages 5770--5793, 2022.
+
+\bibitem{phan2021scifive}
+Long~N. Phan, James~T. Anibal, Hieu Tran, Shaurya Chanana, Erol Bah{\i}d{\i}ro{\u g}lu, Alec Peltekian, and Gr{\'e}goire Altan-Bonnet.
+\newblock {SciFive}: a text-to-text transformer model for biomedical literature.
+\newblock {\em arXiv preprint arXiv:2106.03598}, 2021.
+
+\bibitem{yoon2022sequencetagging}
+Wonjin Yoon, Richard Jackson, Aron Lagerberg, and Jaewoo Kang.
+\newblock Sequence tagging for biomedical extractive question answering.
+\newblock {\em Bioinformatics}, 38(15):3794--3801, 2022.
+
+\end{thebibliography}
+
+\end{document}
