@@ -34,7 +34,10 @@ I volunteered to lead the \textbf{text-representation axis} (Axis 1) because I w
 My concrete contributions were:
 
 \begin{enumerate}
-  \item \textbf{TF-IDF + LR Baselines (A1a/b/c):} implemented three input variants (Q, Q+Ctx, Q+Ctx+Ans) to establish performance ceilings for sparse representations (\texttt{baseline\_lr\_group.py}).
+  \item \textbf{TF-IDF + LR Baselines (A1a/b/c):} implemented three input variants (Q, Q+Ctx, Q+Ctx+Ans\footnote{%
+    \textbf{Ans} refers to the long-answer field provided in PubMedQA annotations---a human-written passage that directly explains the reasoning behind the label.
+    In real-world deployment this field would not be available at inference time, making Q+Ctx+Ans an \emph{oracle} configuration.
+    It is included here solely to probe the model's capability upper bound and to verify that the pipeline can correctly learn from rich evidence when that evidence is explicitly provided.}) to establish performance ceilings for sparse representations (\texttt{baseline\_lr\_group.py}).
   \item \textbf{BioBERT Embeddings + LR:} extracted frozen representations from \texttt{biobert-v1.2} for linear classification (A1d).
   \item \textbf{BioBERT Fine-tuning (Q+Ctx):} adapted the full model (\texttt{modeling\_biobert\_ft\_on\_q\_ctx.py}) with weighted cross-entropy (A1e).
   \item \textbf{BioBERT Fine-tuning (Q+Ctx+Ans):} extended fine-tuning to include long answers (\texttt{modeling\_biobert\_ft\_on\_q\_ctx\_ans.py}), probing the impact of input richness (A1f).
