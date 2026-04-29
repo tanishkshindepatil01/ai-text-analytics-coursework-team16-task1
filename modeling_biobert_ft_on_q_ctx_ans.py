@@ -39,13 +39,13 @@ def load_data():
     train_fold_mask = ~dev_fold_mask
 
     # uses q_ctx_ans
-    train_texts = cv_df.loc[train_fold_mask, "text_q_ctx_ans"].tolist()
+    train_texts = cv_df.loc[train_fold_mask, "q_ctx_ans"].tolist()
     train_labels = cv_df.loc[train_fold_mask, "label_id"].values.tolist()
     
-    val_texts = cv_df.loc[dev_fold_mask, "text_q_ctx_ans"].tolist()
+    val_texts = cv_df.loc[dev_fold_mask, "q_ctx_ans"].tolist()
     val_labels = cv_df.loc[dev_fold_mask, "label_id"].values.tolist()
     
-    test_texts = test_df["text_q_ctx_ans"].tolist()
+    test_texts = test_df["q_ctx_ans"].tolist()
     test_labels = test_df["label_id"].values.tolist()
     
     return train_texts, train_labels, val_texts, val_labels, test_texts, test_labels
@@ -99,7 +99,7 @@ def compute_metrics(eval_pred):
     preds = np.argmax(logits, axis=1)
     return {
         "accuracy": accuracy_score(labels, preds),
-        "macro_f1": f1_score(labels, preds, average="macro")
+        "macro_f1": f1_score(labels, preds, average="macro", zero_division=0)
     }
 
 # Run training
@@ -162,9 +162,9 @@ def run_finetuning():
     
     print("\nFinal Results:")
     print(f"Accuracy: {accuracy_score(ts_lbl, preds):.4f}")
-    print(f"Macro F1: {f1_score(ts_lbl, preds, average='macro'):.4f}")
+    print(f"Macro F1: {f1_score(ts_lbl, preds, average='macro', zero_division=0):.4f}")
     print("\nClassification Report:")
-    print(classification_report(ts_lbl, preds, target_names=["no", "maybe", "yes"]))
+    print(classification_report(ts_lbl, preds, target_names=["no", "maybe", "yes"], zero_division=0))
 
 if __name__ == "__main__":
     run_finetuning()

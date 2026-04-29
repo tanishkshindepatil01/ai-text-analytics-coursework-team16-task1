@@ -97,7 +97,7 @@ def compute_metrics(eval_pred):
     preds = np.argmax(logits, axis=1)
     return {
         "accuracy": accuracy_score(labels, preds),
-        "macro_f1": f1_score(labels, preds, average="macro")
+        "macro_f1": f1_score(labels, preds, average="macro", zero_division=0)
     }
 
 
@@ -161,9 +161,9 @@ def run_finetuning():
     
     print("\nFinal Results:")
     print(f"Accuracy: {accuracy_score(ts_lbl, preds):.4f}")
-    print(f"Macro F1: {f1_score(ts_lbl, preds, average='macro'):.4f}")
+    print(f"Macro F1: {f1_score(ts_lbl, preds, average='macro', zero_division=0):.4f}")
     print("\nClassification Report:")
-    print(classification_report(ts_lbl, preds, target_names=["no", "maybe", "yes"]))
+    print(classification_report(ts_lbl, preds, target_names=["no", "maybe", "yes"], zero_division=0))
 
 if __name__ == "__main__":
     run_finetuning()
