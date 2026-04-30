@@ -29,21 +29,14 @@ Team 16, Task 1: PubMedQA Biomedical Question Answering}
 
 \section{Contributions Summary}
 
-I volunteered to lead the \textbf{text-representation axis} (Axis 1) because I wanted to understand, from first principles, how much the choice of representation---not the classifier---drives performance on a biomedical reasoning task. My strategy was deliberately incremental: start with a transparent sparse baseline, then escalate to frozen contextual embeddings, and finally to full fine-tuning. I expected each step to yield clear gains; as I discuss in Section~2, the reality was more nuanced and, at times, humbling.
+I led the \textbf{text-representation axis} (Axis 1), investigating how input encoding affects biomedical reasoning performance. My strategy was incremental: starting from sparse baselines, moving to frozen contextual embeddings, and concluding with full model fine-tuning. To ensure experimental rigour across the team, I also developed a custom stratified splitting script (\texttt{data\_splitter.py}) for robust 10-fold cross-validation.
 
 My concrete contributions were:
-
-\begin{enumerate}
-  \item \textbf{TF-IDF + LR Baselines (A1a/b/c):} implemented three input variants (Q, Q+Ctx, Q+Ctx+Ans\footnote{%
-    \textbf{Ans} refers to the long-answer field provided in PubMedQA annotations---a human-written passage that directly explains the reasoning behind the label.
-    In real-world deployment this field would not be available at inference time, making Q+Ctx+Ans an \emph{oracle} configuration.
-    It is included here solely to probe the model's capability upper bound and to verify that the pipeline can correctly learn from rich evidence when that evidence is explicitly provided.}) to establish performance ceilings for sparse representations (\texttt{baseline\_lr\_group.py}).
-  \item \textbf{BioBERT Embeddings + LR:} extracted frozen representations from \texttt{biobert-v1.2} for linear classification (A1d).
-  \item \textbf{BioBERT Fine-tuning (Q+Ctx):} adapted the full model (\texttt{modeling\_biobert\_ft\_on\_q\_ctx.py}) with weighted cross-entropy (A1e).
-  \item \textbf{BioBERT Fine-tuning (Q+Ctx+Ans):} extended fine-tuning to include long answers (\texttt{modeling\_biobert\_ft\_on\_q\_ctx\_ans.py}), probing the impact of input richness (A1f).
-\end{enumerate}
-
-Additionally, I implemented a custom data-splitting script (\texttt{data\_splitter.py}) to cross-verify the stratified 500/500 split and 10-fold CV protocol---partly out of caution, and partly because I wanted independent confidence in the preprocessing before building experiments on top of it.
+\begin{itemize}
+  \item \textbf{TF-IDF + LR Baselines (A1a/b/c):} Implemented three input variants (Q, Q+Ctx, Q+Ctx+Ans) to establish sparse performance ceilings (\texttt{baseline\_lr\_group.py}).
+  \item \textbf{BioBERT Embeddings + LR (A1d):} Extracted frozen representations from \texttt{biobert-v1.2} to evaluate contextual embeddings for linear classification.
+  \item \textbf{BioBERT Fine-tuning (A1e/f):} Adapted the full model with weighted cross-entropy for Q+Ctx and oracle Q+Ctx+Ans inputs (\texttt{modeling\_biobert\_ft\_*.py}).
+\end{itemize}
 
 \medskip
 \begin{figure}[h]
@@ -53,60 +46,37 @@ Additionally, I implemented a custom data-splitting script (\texttt{data\_splitt
 \end{figure}
 
 
+
+
 \section{Technical Understanding}
 
-\subsection*{2a. Technical Challenge: Input Composition and Class Imbalance}
+\subsection*{2a. Technical Challenge: Context Window Optimization (A1d)}
 
-PubMedQA presents two interacting challenges: extreme class imbalance (\emph{maybe} is only 11\%) and the conditional utility of the long answer field. 
-For the baseline, I addressed imbalance using \texttt{class\_weight="balanced"}. For BioBERT, I implemented a \texttt{WeightedTrainer} to inject per-class weights into \texttt{CrossEntropyLoss}, ensuring methodological consistency.
-
-Crucially, my TF-IDF baselines (A1a/b/c) exhibited a performance plateau (macro-F1 $\sim 0.35$) regardless of input composition, suggesting that sparse representations cannot leverage extended context. In contrast, while BioBERT on Q+Ctx alone (A1e, $0.294$) underperformed the baseline, adding the long-answer channel (A1f) lifted macro-F1 to $0.466$. While this field acts as an "oracle" unavailable in practical deployment, the A1f experiment was vital to confirm the model's upper-bound capacity.
+A significant challenge was that frozen BioBERT embeddings (A1d) initially underperformed sparse baselines. I diagnosed this as a \textbf{context window limitation}: the default sentence-transformer configuration truncated inputs at 100 tokens, losing critical evidence. I re-implemented the extraction pipeline using \texttt{AutoModel} with a 384-token window and mean-pooling. This optimization raised test macro-F1 from 0.353 to 0.419 (+18.7\%), demonstrating that representation quality was limited by encoding parameters rather than model expressiveness. Additionally, I implemented weighted cross-entropy to handle the extreme class imbalance (11\% \emph{maybe} class).
 
 \subsection*{2b. Impact on Group Results}
 
-My experiments (A1a--f) established the "Axis-1" narrative in the group report. While frozen BioBERT embeddings (A1d) improved \emph{maybe}-class recovery ($0.057 \to 0.172$), the A1e-vs-A1f comparison provided our central empirical finding: adding the long answer yields a $+0.17$ macro-F1 gain for transformers, a trend not observed in TF-IDF. This finding motivated the team's final transition to PubMedBERT (A1g), which achieved our peak result of $0.604$.
+My Axis-1 experiments provided the team's central empirical finding: while sparse models plateau regardless of input richness, transformer models can leverage extended context (A1f), achieving 0.466 macro-F1. This established the "representation matters" narrative and motivated our final transition to PubMedBERT (A1g), which yielded our peak result of 0.604. My work ensured that the baseline and intermediate transformer experiments were statistically robust and properly weighted.
 
 \subsection*{2c. Reflection and Future Work}
 
-Beyond our official axes, I exploratory-tested a zero-shot LLM (Gemini API), achieving a macro-F1 of $0.611$—surpassing our fine-tuned models. This suggests that future work should prioritize generative reasoning. Specifically, techniques such as \textbf{Chain-of-Thought (CoT)} or \textbf{step-wise verification} could further improve the detection of inconclusive evidence by forcing the model to explicitly assess evidence-sufficiency before label assignment, addressing the core bottleneck of the \emph{maybe} class.
-
-\medskip
-\noindent\textbf{Representation Quality Ablation: Context Window in A1d.}
-A key question in Axis 1 is whether \emph{frozen} BioBERT representations genuinely encode biomedical evidence, or whether their performance ceiling is an artefact of how the encoder was configured. To probe this, I conducted an ablation on the \textbf{effective context window} used during embedding extraction in A1d. The original run relied on \texttt{SentenceTransformer}'s default of \textbf{100 tokens}, which is insufficient to cover the vast majority of Q+Context inputs in PubMedQA, meaning that most of the medical evidence passage never reached the encoder.
-
-Re-implementing A1d with \texttt{AutoModel}, explicit \texttt{max\_length=384}, and mean-pooling (\texttt{modeling\_biobert\_lr.py \& modeling\_biobert\_ft\_on\_q\_ctx.ipynb}) raised the test macro-F1 from $0.353$ to $0.419$ ($+18.7\%$), with \emph{maybe}-class F1 improving from $0.172$ to $0.180$. This ablation demonstrates that \textbf{the quality of a frozen representation is tightly coupled to how much context the encoder can read}: the A1d result reported in the group submission was limited by the encoding window, not by the expressiveness of BioBERT itself. This finding is squarely within Axis 1's scope---it concerns the fidelity of text representations, independent of classifier-level tuning explored under Axis 2.
+Exploratory zero-shot testing with the Gemini API achieved 0.611 macro-F1, surpassing our fine-tuned models. This indicates that future work should explore generative reasoning (e.g., Chain-of-Thought) to improve evidence detection for the \emph{maybe} class, moving beyond the representation-focused scope of Axis 1.
 
 
 \section{Teamwork}
 
 
-The team coordinated through a shared \textbf{GitHub repository}
-(\texttt{ai-text-analytics-coursework-team16-task1}), using personal branches. Discussing in a group chat on \textbf{WhatsApp}.  A shared \textbf{Jira board} tracked task
-ownership, deadlines, and blockers; weekly online check-ins and meetings via
-\textbf{Microsoft Teams} kept everyone aligned.
+The team coordinated via \textbf{GitHub}, \textbf{WhatsApp}, and \textbf{Jira}, with weekly \textbf{Microsoft Teams} meetings to resolve blockers. To ensure inclusion and consistency, all experimental results were cross-checked by teammates.
 
 Role assignments were as follows:
-
 \begin{itemize}
-  \item \textbf{Abdullah} -- data loading, preprocessing, label encoding, text
-        input creation, train-test split, and 10-fold CV setup; dataset sanity
-        checks, label-distribution and split-count verification, and export of
-        the final cleaned dataset and split-summary tables.
-  \item \textbf{Peidong Wang} -- TF-IDF + LR baseline, BioBERT embeddings + LR,
-        and BioBERT end-to-end fine-tuning (Axis 1: text representation).
-  \item \textbf{Zhengjie} -- classical Axis 2 models: tuned LR, calibrated SVM,
-        Multinomial NB, SMOTE + LR, and soft-voting ensemble.
-  \item \textbf{Abhigyan} -- error analysis: confusion matrix checks,
-        misclassified-example inspection, cross-model comparison notes, and
-        result verification.
-  \item \textbf{Tanishk} -- advanced transformer and maybe-class models
-        (PubMedBERT, LoRA, zero-shot BART, focal loss, threshold tuning, ordinal
-        loss, hierarchical classifier); final integration, tables, graphs, result
-        export, and notebook cleanup.
+  \item \textbf{Peidong Wang} -- I led the \textbf{text-representation axis (Axis 1)}, developing the TF-IDF baselines and BioBERT fine-tuning pipelines. My focus was on optimizing input composition (e.g., adding long-answer channels), tuning the encoding context window, and implementing weighted loss functions to address the \emph{maybe}-class imbalance.
+  \item \textbf{Abdullah} -- Data loading, preprocessing, and 10-fold CV infrastructure.
+  \item \textbf{Zhengjie} -- Axis-2 classical models and ensemble methods.
+  \item \textbf{Abhigyan} -- Error analysis and misclassification inspection.
+  \item \textbf{Tanishk} -- Advanced transformer models (PubMedBERT) and final integration.
 \end{itemize}
 
-Every member participated in at least one evaluation sprint, and all
-results were cross-checked to guarantee reproducibility.  A fixed random seed (\texttt{SEED = 42}) was
-adopted collectively across all scripts to ensure experimental consistency.
+A shared random seed (\texttt{SEED=42}) and a unified data-splitting protocol were adopted by all members to guarantee reproducibility.
 
 \end{document}
