@@ -52,7 +52,7 @@ My concrete contributions are:
 
 \subsection*{2a. Technical Challenge: Context Window Optimization (A1d)}
 
-A significant challenge was that frozen BioBERT embeddings (A1d) initially underperformed sparse baselines. I diagnosed this as a \textbf{context window limitation}: the default sentence-transformer configuration truncated inputs at 100 tokens, losing critical evidence. I re-implemented the extraction pipeline using \texttt{AutoModel} with a 384-token window and mean-pooling. This optimization raised test macro-F1 from 0.353 to 0.419 (+18.7\%), demonstrating that representation quality was limited by encoding parameters rather than model expressiveness. Additionally, I implemented weighted cross-entropy to handle the extreme class imbalance (11\% \emph{maybe} class, all results are recorded in \texttt{AITA\_Biobert\_fit\_on\_q\_ctx.ipynb}).
+A significant challenge was that frozen BioBERT embeddings (A1d) initially underperformed sparse baselines. I diagnosed this as a \textbf{context window limitation}: the default sentence-transformer configuration truncated inputs at 100 tokens, losing critical evidence. I re-implemented the extraction pipeline using \texttt{AutoModel} with a 384-token window and mean-pooling. This optimization raised test macro-F1 from 0.353 to 0.419 (+18.7\%), demonstrating that representation quality was limited by encoding parameters rather than model expressiveness (all results are recorded in \texttt{AITA\_Biobert\_fit\_on\_q\_ctx.ipynb}).
 
 \subsection*{2b. Impact on Group Results}
 
