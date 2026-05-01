@@ -29,20 +29,20 @@ Team 16, Task 1: PubMedQA Biomedical Question Answering}
 
 \section{Contributions Summary}
 
-I led the \textbf{text-representation axis} (Axis 1), investigating how input encoding affects biomedical reasoning performance. My strategy was incremental: starting from sparse baselines, moving to frozen contextual embeddings, and concluding with full model fine-tuning. To ensure experimental rigour across the team, I also developed a custom stratified splitting script (\texttt{data\_splitter.py}) for robust 10-fold cross-validation.
+I led the \textbf{text-representation axis} (Axis 1), investigating how input encoding affects biomedical reasoning performance. I implemented an incremental strategy from sparse baselines to full fine-tuning, developing a custom stratified splitting script (\texttt{data\_splitter.py}) to ensure experimental rigour across the team.
 
-My concrete contributions were:
+My concrete contributions are:
 \begin{itemize}
-  \item \textbf{TF-IDF + LR Baselines (A1a/b/c):} Implemented three input variants (Q, Q+Ctx, Q+Ctx+Ans) to establish sparse performance ceilings (\texttt{baseline\_lr\_group.py}).
-  \item \textbf{BioBERT Embeddings + LR (A1d):} Extracted frozen representations from \texttt{biobert-v1.2} to evaluate contextual embeddings for linear classification.
-  \item \textbf{BioBERT Fine-tuning (A1e/f):} Adapted the full model with weighted cross-entropy for Q+Ctx and oracle Q+Ctx+Ans inputs (\texttt{modeling\_biobert\_ft\_*.py}).
+  \item \textbf{TF-IDF + LR Baselines (A1a/b/c):} Implemented three input variants (Q, Q+Ctx, Q+Ctx+Ans\footnote{\textbf{Ans} (long-answer) is a human-written reasoning passage provided in PubMedQA. As it would be unavailable during inference, Q+Ctx+Ans acts as an \textbf{oracle} configuration to probe the model's upper-bound capacity.}) to establish sparse performance ceilings (\texttt{baseline\_lr\_group.py}).
+  \item \textbf{BioBERT Embeddings + LR (A1d):} Extracted frozen representations from \texttt{biobert-v1.2} to evaluate contextual embeddings for linear classification (\texttt{modeling\_biobert\_lr.py}).
+  \item \textbf{BioBERT Fine-tuning (A1e/f):} Adapted the full model with weighted cross-entropy for Q+Ctx and oracle Q+Ctx+Ans inputs (\texttt{modeling\_biobert\_ft.py}).
 \end{itemize}
 
 \medskip
 \begin{figure}[h]
   \centering
   \includegraphics[width=\linewidth]{git_log_by_wang.jpg}
-  \caption*{\textit{Figure 1: GitHub commit activity -- commits attributed to Peidong Wang.}}
+  \caption{\textit{GitHub commit activity -- commits attributed to Peidong Wang.}}
 \end{figure}
 
 
@@ -52,7 +52,7 @@ My concrete contributions were:
 
 \subsection*{2a. Technical Challenge: Context Window Optimization (A1d)}
 
-A significant challenge was that frozen BioBERT embeddings (A1d) initially underperformed sparse baselines. I diagnosed this as a \textbf{context window limitation}: the default sentence-transformer configuration truncated inputs at 100 tokens, losing critical evidence. I re-implemented the extraction pipeline using \texttt{AutoModel} with a 384-token window and mean-pooling. This optimization raised test macro-F1 from 0.353 to 0.419 (+18.7\%), demonstrating that representation quality was limited by encoding parameters rather than model expressiveness. Additionally, I implemented weighted cross-entropy to handle the extreme class imbalance (11\% \emph{maybe} class).
+A significant challenge was that frozen BioBERT embeddings (A1d) initially underperformed sparse baselines. I diagnosed this as a \textbf{context window limitation}: the default sentence-transformer configuration truncated inputs at 100 tokens, losing critical evidence. I re-implemented the extraction pipeline using \texttt{AutoModel} with a 384-token window and mean-pooling. This optimization raised test macro-F1 from 0.353 to 0.419 (+18.7\%), demonstrating that representation quality was limited by encoding parameters rather than model expressiveness. Additionally, I implemented weighted cross-entropy to handle the extreme class imbalance (11\% \emph{maybe} class, all results are recorded in \texttt{AITA\_Biobert\_fit\_on\_q\_ctx.ipynb}).
 
 \subsection*{2b. Impact on Group Results}
 
@@ -70,7 +70,7 @@ The team coordinated via \textbf{GitHub}, \textbf{WhatsApp}, and \textbf{Jira}, 
 
 Role assignments were as follows:
 \begin{itemize}
-  \item \textbf{Peidong Wang} -- I led the \textbf{text-representation axis (Axis 1)}, developing the TF-IDF baselines and BioBERT fine-tuning pipelines. My focus was on optimizing input composition (e.g., adding long-answer channels), tuning the encoding context window, and implementing weighted loss functions to address the \emph{maybe}-class imbalance.
+  \item \textbf{Peidong Wang} -- I led the \textbf{text-representation axis (Axis 1)}, developing the TF-IDF baselines and BioBERT fine-tuning pipelines. My focus was on optimizing input composition (e.g., adding long-answer channels), tuning the encoding context window.
   \item \textbf{Abdullah} -- Data loading, preprocessing, and 10-fold CV infrastructure.
   \item \textbf{Zhengjie} -- Axis-2 classical models and ensemble methods.
   \item \textbf{Abhigyan} -- Error analysis and misclassification inspection.
